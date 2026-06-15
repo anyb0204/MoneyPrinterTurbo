@@ -23,9 +23,10 @@ captured here.
 ### Running the services (dev)
 - API (FastAPI/uvicorn) on port 8080: `uv run python main.py`. Verify with
   `curl http://127.0.0.1:8080/openapi.json` (or the homepage `/`). The interactive
-  `/docs` (Swagger UI) renders BLANK in-browser here because it loads its JS/CSS from
-  `cdn.jsdelivr.net`, which is egress-blocked — the API itself is fine; use
-  `curl`/`openapi.json` to confirm endpoints.
+  `/docs` (Swagger UI) loads its JS/CSS from `cdn.jsdelivr.net`; that domain has been
+  added to the egress allowlist, so `/docs` renders. If it ever shows blank again,
+  re-check that `cdn.jsdelivr.net` is allowlisted (the API itself works regardless —
+  confirm via `curl`/`openapi.json`).
 - WebUI (Streamlit) on port 8501: `uv run streamlit run ./webui/Main.py --server.address=0.0.0.0 --server.port=8501 --server.headless=true --browser.gatherUsageStats=False`.
   Streamlit's first run prompts for an email on stdin and hangs; this is avoided by a
   `~/.streamlit/credentials.toml` containing `[general]\nemail = ""` (and
@@ -33,15 +34,19 @@ captured here.
 
 ### Tests
 - `uv run python -m unittest discover -s test` (see `test/README.md`).
-- Several tests reach the network or need provider keys and will skip/fail offline:
-  `test_azure_tts_v1` FAILS because the default edge-tts endpoint
-  `speech.platform.bing.com:443` is egress-blocked; `test_siliconflow` and
-  `test_azure_tts_v2` SKIP without keys. The rest pass.
+- `test_siliconflow` and `test_azure_tts_v2` SKIP without provider keys.
+- `test_azure_tts_v1` uses the default edge-tts endpoint `speech.platform.bing.com`
+  (now egress-allowlisted) and passes. Caveat: edge-tts rate-limits rapid repeated
+  calls — the app's sync path then hits its 30s timeout and retries 3x. If TTS starts
+  timing out, wait ~1-2 min for the throttle to clear and retry; it is NOT an egress
+  block (a single async `edge_tts` stream still connects).
 
 ### End-to-end video generation
-- The full WebUI/API flow needs network + keys: an LLM provider (script), Pexels/Pixabay
-  (materials), and TTS (`speech.platform.bing.com` for the default edge voice) — all
-  currently egress-blocked or key-gated. The core video-assembly engine
-  (`app.services.video.combine_videos` + `generate_video`, i.e. moviepy/ffmpeg/Pillow)
-  runs fully offline against the local clips in `test/resources/*.png.mp4` and BGM in
-  `resource/songs/`, producing a real subtitled MP4 under `storage/tasks/<id>/`.
+- TTS (default edge voice via `speech.platform.bing.com`) now works (allowlisted), so the
+  narration + subtitle + video-assembly chain runs end to end: `app.services.voice.tts`
+  → `create_subtitle` → `app.services.video.combine_videos` → `generate_video`
+  (moviepy/ffmpeg/Pillow), producing a real subtitled MP4 under `storage/tasks/<id>/`.
+- The remaining two steps of the *full* product flow still need user-supplied API keys:
+  an LLM provider (AI script generation) and Pexels/Pixabay (stock materials). Without
+  them, supply the script manually and use local clips (`test/resources/*.png.mp4`) +
+  BGM (`resource/songs/`) as materials.
